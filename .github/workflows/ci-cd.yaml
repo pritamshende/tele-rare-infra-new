@@ -34,15 +34,9 @@ jobs:
           distribution: 'temurin'
 
       - name: Build with Maven
-        run: |
-          if [ -f "pom.xml" ]; then
-            mvn clean package -DskipTests
-          else
-            echo "pom.xml not found, skipping Maven build"
-          fi
+        run: mvn clean package -DskipTests
 
       - name: SonarQube Scan
-        if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarcloud-github-action@v2
         with:
           projectBaseDir: .
@@ -69,7 +63,7 @@ jobs:
           tags: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
       - name: Run Trivy Scan
-        uses: aquasecurity/trivy-action@v0.11.1
+        uses: aquasecurity/trivy-action@0.11.2
         with:
           image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           format: 'table'
@@ -78,27 +72,17 @@ jobs:
 
       - name: Update Kubernetes manifests (set image tag)
         run: |
-          if [ -f "k8s-gitops/deployment.yaml" ]; then
-            sed -i "s|image: .*|image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|" k8s-gitops/deployment.yaml
-          else
-            echo "k8s-gitops/deployment.yaml not found, skipping manifest update"
-          fi
+          sed -i "s|image: .*|image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|" k8s/deployment.yaml
 
       - name: Commit and push updated deployment manifest
-        if: success()
         run: |
-          if [ -f "k8s-gitops/deployment.yaml" ]; then
-            git config --global user.email "github-actions[bot]@users.noreply.github.com"
-            git config --global user.name "github-actions[bot]"
-            git add k8s-gitops/deployment.yaml
-            git commit -m "Update image tag to ${{ env.IMAGE_TAG }} [skip ci]" || echo "No changes to commit"
-            git push
-          else
-            echo "k8s-gitops/deployment.yaml not found, skipping commit"
-          fi
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+          git add k8s/deployment.yaml
+          git commit -m "Update image tag to ${{ env.IMAGE_TAG }} [skip ci]" || echo "No changes to commit"
+          git push
 
       - name: Trigger ArgoCD Sync
-        if: env.ARGOCD_AUTH_TOKEN != ''
         run: |
           curl -k -H "Authorization: Bearer ${{ env.ARGOCD_AUTH_TOKEN }}" \
-            -X POST "${{ env.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync" || echo "ArgoCD sync failed, continuing..."
+            -X POST "${{ env.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync"
