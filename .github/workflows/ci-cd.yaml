@@ -18,6 +18,7 @@ env:
   ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
   ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
   K8S_NAMESPACE: tele-rare
+  TEST_ONLY: true
 
 jobs:
   build-and-deploy:
@@ -41,13 +42,14 @@ jobs:
         with:
           projectBaseDir: .
         env:
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Azure Container Registry
+        if: env.TEST_ONLY != 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ACR_LOGIN_SERVER }}
@@ -55,6 +57,7 @@ jobs:
           password: ${{ env.ACR_PASSWORD }}
 
       - name: Build and push Docker image
+        if: env.TEST_ONLY != 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
