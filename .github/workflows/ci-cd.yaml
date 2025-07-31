@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 env:
-  ACR_LOGIN_SERVER: pritamshende.azurecr.io # ✅ Replace with your actual ACR name
+  ACR_LOGIN_SERVER: pritamshende/azurecr.io:tagname # ✅ Replace with your actual ACR name
   ACR_USERNAME: pritamshende                # ✅ Replace with your username (if needed)
   ACR_PASSWORD: Samsung@123                 # ⚠️ Not safe — for testing only
   IMAGE_NAME: tele-rare-backend
