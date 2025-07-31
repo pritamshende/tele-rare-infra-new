@@ -7,17 +7,16 @@ on:
     branches: [ main ]
 
 env:
-  ACR_LOGIN_SERVER: https://hub.docker.com/repository/docker/pritamshende/azurecr.io # ✅ Replace with your actual ACR name
-  ACR_USERNAME: pritamshende                # ✅ Replace with your username (if needed)
-  ACR_PASSWORD: Samsung@123                 # ⚠️ Not safe — for testing only
   IMAGE_NAME: tele-rare-backend
   IMAGE_TAG: ${{ github.sha }}
+  DOCKERHUB_USERNAME: pritamshende
+  DOCKERHUB_PASSWORD: Samsung@123 # ⚠️ For production, move this to GitHub secrets
   K8S_NAMESPACE: tele-rare
   TEST_ONLY: false
-  SONAR_HOST_URL: https://sonarcloud.io     # Optional override
-  SONAR_TOKEN: your-sonar-token             # Optional override
-  ARGOCD_SERVER: https://argocd.example.com # Optional override
-  ARGOCD_AUTH_TOKEN: your-argocd-token      # Optional override
+  SONAR_HOST_URL: https://sonarcloud.io
+  SONAR_TOKEN: your-sonar-token
+  ARGOCD_SERVER: https://argocd.example.com
+  ARGOCD_AUTH_TOKEN: your-argocd-token
 
 jobs:
   build-and-deploy:
@@ -48,35 +47,32 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Azure Container Registry
-        if: env.TEST_ONLY != 'true'
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.ACR_LOGIN_SERVER }}
-          username: ${{ env.ACR_USERNAME }}
-          password: ${{ env.ACR_PASSWORD }}
+          registry: docker.io
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_PASSWORD }}
 
-      - name: Build and push Docker image
-        if: env.TEST_ONLY != 'true'
+      - name: Build and push Docker image to Docker Hub
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          tags: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
       - name: Run Trivy Scan
-        if: env.TEST_ONLY != 'true'
         uses: aquasecurity/trivy-action@0.11.2
         with:
-          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          image-ref: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           format: 'table'
           exit-code: '1'
           ignore-unfixed: true
 
       - name: Update Kubernetes manifests (set image tag)
         run: |
-          sed -i "s|image: .*|image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|" k8s/deployment.yaml
+          sed -i "s|image: .*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|" k8s/deployment.yaml
 
       - name: Commit and push updated deployment manifest
         run: |
