@@ -72,8 +72,8 @@ jobs:
           
       - name: Update Kubernetes manifests (set image tag)
         run: |
-          sed -i "s|image: .*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|" k8s/deployment.yaml
-
+          sed -i "s|image: .*|image: pritamshende/tele-rare-backend:${{ env.IMAGE_TAG }}|" k8s/deployment.yaml
+          
       - name: Commit and push updated deployment manifest
         run: |
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
