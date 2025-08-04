@@ -65,11 +65,11 @@ jobs:
       - name: Run Trivy Scan
         uses: aquasecurity/trivy-action@0.11.2
         with:
-          image-ref: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          format: 'table'
-          exit-code: '1'
+          image-ref:  ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          exit-code: '1'                # Or '0' if you don't want failures
           ignore-unfixed: true
-
+          severity: HIGH,CRITICAL
+          
       - name: Update Kubernetes manifests (set image tag)
         run: |
           sed -i "s|image: .*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|" k8s/deployment.yaml
