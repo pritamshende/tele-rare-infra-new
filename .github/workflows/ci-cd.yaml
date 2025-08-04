@@ -72,7 +72,7 @@ jobs:
           
       - name: Update Kubernetes manifests (set image tag)
         run: |
-           sed -i "s|image: .*|image: pritamshende/tele-rare-backend:${{ env.IMAGE_TAG }}|" monitoring/deployment.yaml
+           sed -i "s|image: .*|image: pritamshende/tele-rare-backend:${{ env.IMAGE_TAG }}|" k8s-gitops/monitoring/deployment.yaml
           
       - name: Commit and push updated deployment manifest
         run: |
