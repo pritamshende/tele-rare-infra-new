@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tele-rare-backend
+  labels:
+    app: tele-rare-backend
+spec:
+  selector:
+    app: tele-rare-backend
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: ClusterIP
