@@ -15,8 +15,8 @@ env:
   TEST_ONLY: false
   SONAR_HOST_URL: https://sonarcloud.io
   SONAR_TOKEN: your-sonar-token
-  ARGOCD_SERVER: https://argocd.localhost.com
-  ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+  ARGOCD_SERVER: https://argocd.example.com
+  ARGOCD_AUTH_TOKEN: your-argocd-token
 
 jobs:
   build-and-deploy:
@@ -81,10 +81,8 @@ jobs:
           git add k8s-gitops/deployment.yaml
           git commit -m "Update image tag to ${{ env.IMAGE_TAG }} [skip ci]" || echo "No changes to commit"
           git push
-
       - name: Trigger ArgoCD Sync
-        env:
-           TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+        if: env.ARGOCD_AUTH_TOKEN != 'your-argocd-token'
         run: |
           curl -k -H "Authorization: Bearer ${{ env.ARGOCD_AUTH_TOKEN }}" \
             -X POST "${{ env.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync"
