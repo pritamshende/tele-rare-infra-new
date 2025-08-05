@@ -15,7 +15,7 @@ env:
   TEST_ONLY: false
   SONAR_HOST_URL: https://sonarcloud.io
   SONAR_TOKEN: your-sonar-token
-  ARGOCD_SERVER: https://argocd.example.com
+  ARGOCD_SERVER: https://argocd.localhost.com
   ARGOCD_AUTH_TOKEN: ${{ secrets.ARGOCD_AUTH_TOKEN }}
 
 jobs:
