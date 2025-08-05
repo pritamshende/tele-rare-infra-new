@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: tele-rare-backend
-          image: pritamshende/tele-rare-backend:efa7c9c5346f6b841de20f0cd633d528f1c06841
+          image: pritamshende/tele-rare-backend:7e7da6d657f0d9bca22abb8bbde62c5419cbf28b
           ports:
             - containerPort: 8080
 
@@ -37,7 +37,7 @@ spec:
     spec:
       containers:
         - name: my-java-app
-          image: pritamshende/tele-rare-backend:efa7c9c5346f6b841de20f0cd633d528f1c06841
+          image: pritamshende/tele-rare-backend:7e7da6d657f0d9bca22abb8bbde62c5419cbf28b
           ports:
             - containerPort: 8080
 ---
