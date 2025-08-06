@@ -1,0 +1,11 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: backstage-new
+  description: Backstage portal customizations
+  annotations:
+    github.com/project-slug: pritamshende/backstage-new
+spec:
+  type: website
+  owner: pritamshende
+  lifecycle: development
