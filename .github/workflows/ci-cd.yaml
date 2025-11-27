@@ -10,64 +10,94 @@ env:
   IMAGE_NAME: tele-rare-backend
   IMAGE_TAG: ${{ github.sha }}
   DOCKERHUB_USERNAME: pritamshende
-  DOCKERHUB_PASSWORD: Samsung@123 # ⚠️ move to GitHub secrets in real use
   K8S_NAMESPACE: tele-rare
   TEST_ONLY: false
   SONAR_HOST_URL: https://sonarcloud.io
-  SONAR_TOKEN: your-sonar-token
   ARGOCD_SERVER: https://argocd.example.com
-  ARGOCD_AUTH_TOKEN: your-argocd-token
 
-# =======================================================================
-# Jobs
-# =======================================================================
 jobs:
-  # 1) Legitify – run ONLY on pull requests, for this repo
+  # -------------------- Legitify Security Scan --------------------
   legitify-security-check:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-
+    permissions:
+      contents: read
+      security-events: write
+      issues: write
+    
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Legitify with Scorecard
-        uses: Legit-Labs/legitify@main
+      - name: Run Legitify Security Scan
+        uses: Legit-Labs/legitify@v1.0.10
         with:
+          # Required: GitHub token with appropriate permissions
           github_token: ${{ secrets.PAT_FOR_LEGITIFY }}
-          analyze_self_only: 'true'
-          scorecard: 'verbose'
-          upload_code_scanning: 'true'
+          
+          # Analyze only current repository (not entire org)
+          analyze_self_only: true
+          
+          # Upload results to GitHub Security tab (recommended)
+          upload_code_scanning: true
+          
+          # Generate a scorecard in the summary
+          scorecard: true
+          
+          # Optional: Specify the base version (latest stable)
+          legitify_base_version: latest
+          
+          # Optional: Fail the workflow if critical issues are found
+          # Uncomment the line below if you want to enforce security policies
+          # fail_on_errors: true
+          
+          # Optional: Upload results as an artifact
+          artifact_name: legitify-results
+          
+          # Optional: Ignore specific policies (uncomment and modify as needed)
           # ignore-policies: |
           #   non_admins_can_create_public_repositories
+          #   requires_status_checks
 
-  # 2) Build & deploy for PULL REQUESTS (gated by Legitify)
-  build-and-deploy-pr:
+      - name: Display Legitify Results Summary
+        if: always()
+        run: |
+          echo "✅ Legitify security scan completed!"
+          echo "Check the Security tab for detailed results and scorecard."
+
+  # -------------------- Build & Deploy --------------------
+  build-and-deploy:
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     needs: legitify-security-check
-
+    permissions:
+      contents: write
+      packages: write
+      
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: 'maven'
 
       - name: Build with Maven
         run: mvn clean package -DskipTests
 
       - name: SonarQube Scan
-        if: env.SONAR_TOKEN != 'your-sonar-token'
-        uses: SonarSource/sonarcloud-github-action@v2
+        if: env.SONAR_TOKEN != '' && env.SONAR_TOKEN != 'your-sonar-token'
+        uses: SonarSource/sonarcloud-github-action@v3
         with:
           projectBaseDir: .
         env:
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -77,109 +107,65 @@ jobs:
         with:
           registry: docker.io
           username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ env.DOCKERHUB_PASSWORD }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Build and push Docker image to Docker Hub
+      - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          tags: |
+            ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=registry,ref=${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
-      - name: Run Trivy Scan
-        uses: aquasecurity/trivy-action@0.11.2
+      - name: Run Trivy Security Scan
+        uses: aquasecurity/trivy-action@0.28.0
         with:
-          image-ref:  ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          image-ref: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
           exit-code: '0'
           ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          
-      - name: Update Kubernetes manifests (set image tag)
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Update Kubernetes manifests
         run: |
-          sed -i "s|image: .*|image: pritamshende/tele-rare-backend:${{ env.IMAGE_TAG }}|" k8s-gitops/deployment.yaml
-          
-      - name: Commit and push updated deployment manifest
+          sed -i "s|image: .*/${{ env.IMAGE_NAME }}:.*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|" k8s-gitops/deployment.yaml
+
+      - name: Commit and push updated manifests
         run: |
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
           git add k8s-gitops/deployment.yaml
-          git commit -m "Update image tag to ${{ env.IMAGE_TAG }} [skip ci]" || echo "No changes to commit"
-          git push
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "🚀 Update image tag to ${{ env.IMAGE_TAG }} [skip ci]"
+            git push
+          fi
 
       - name: Trigger ArgoCD Sync
-        if: env.ARGOCD_AUTH_TOKEN != 'your-argocd-token'
+        if: secrets.ARGOCD_AUTH_TOKEN != ''
         run: |
-          curl -k -H "Authorization: Bearer ${{ env.ARGOCD_AUTH_TOKEN }}" \
-            -X POST "${{ env.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync"
-
-  # 3) Build & deploy for PUSHES (no Legitify gating)
-  build-and-deploy-push:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Build with Maven
-        run: mvn clean package -DskipTests
-
-      - name: SonarQube Scan
-        if: env.SONAR_TOKEN != 'your-sonar-token'
-        uses: SonarSource/sonarcloud-github-action@v2
-        with:
-          projectBaseDir: .
-        env:
-          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          registry: docker.io
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ env.DOCKERHUB_PASSWORD }}
-
-      - name: Build and push Docker image to Docker Hub
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-
-      - name: Run Trivy Scan
-        uses: aquasecurity/trivy-action@0.11.2
-        with:
-          image-ref:  ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          exit-code: '0'
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
+          response=$(curl -k -w "\n%{http_code}" \
+            -H "Authorization: Bearer ${{ secrets.ARGOCD_AUTH_TOKEN }}" \
+            -X POST "${{ env.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync")
           
-      - name: Update Kubernetes manifests (set image tag)
-        run: |
-          sed -i "s|image: .*|image: pritamshende/tele-rare-backend:${{ env.IMAGE_TAG }}|" k8s-gitops/deployment.yaml
+          http_code=$(echo "$response" | tail -n1)
           
-      - name: Commit and push updated deployment manifest
-        run: |
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global user.name "github-actions[bot]"
-          git add k8s-gitops/deployment.yaml
-          git commit -m "Update image tag to ${{ env.IMAGE_TAG }} [skip ci]" || echo "No changes to commit"
-          git push
-
-      - name: Trigger ArgoCD Sync
-        if: env.ARGOCD_AUTH_TOKEN != 'your-argocd-token'
-        run: |
-          curl -k -H "Authorization: Bearer ${{ env.ARGOCD_AUTH_TOKEN }}" \
-            -X POST "${{ env.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync"
+          if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
+            echo "✅ ArgoCD sync triggered successfully"
+          else
+            echo "⚠️ ArgoCD sync failed with status code: $http_code"
+            exit 1
+          fi
