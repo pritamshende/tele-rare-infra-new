@@ -17,7 +17,6 @@ jobs:
   # ============================================================================
   # SECURITY SCANNING
   # ============================================================================
-  
   security-scan:
     name: Security Analysis
     runs-on: ubuntu-latest
@@ -36,7 +35,7 @@ jobs:
         with:
           github_token: ${{ secrets.PAT_FOR_LEGITIFY }}
           analyze_self_only: "true"
-          scorecard: "verbose"
+          scorecard: "verbose"          # prints detailed table in logs
           upload_code_scanning: "true"
           artifact_name: "legitify-report"
           legitify_base_version: "1.0"
@@ -49,7 +48,6 @@ jobs:
   # ============================================================================
   # BUILD & TEST
   # ============================================================================
-
   build:
     name: Build Application
     runs-on: ubuntu-latest
@@ -79,6 +77,9 @@ jobs:
           path: target/*.jar
           retention-days: 7
 
+  # ============================================================================
+  # CODE QUALITY (OPTIONAL)
+  # ============================================================================
   code-quality:
     name: Code Quality
     runs-on: ubuntu-latest
@@ -107,7 +108,6 @@ jobs:
   # ============================================================================
   # CONTAINER BUILD & SCAN
   # ============================================================================
-
   container:
     name: Container Security
     runs-on: ubuntu-latest
@@ -164,9 +164,8 @@ jobs:
         run: docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
   # ============================================================================
-  # DEPLOY
+  # DEPLOY (COMMENTED OUT FOR NOW)
   # ============================================================================
-
   # deploy:
   #   name: Deploy to AKS
   #   runs-on: ubuntu-latest
@@ -174,46 +173,16 @@ jobs:
   #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
   #   permissions:
   #     contents: write
-    
   #   steps:
-  #     - name: Checkout Infra Repo
-  #       uses: actions/checkout@v4
-  #       with:
-  #         repository: pritamshende/tele-rare-infra-new
-  #         token: ${{ secrets.PAT_FOR_LEGITIFY }}
-  #         path: infra
-
-  #     - name: Update Deployment
-  #       working-directory: infra
-  #       run: |
-  #         sed -i "s|image: .*/${{ env.IMAGE_NAME }}:.*|image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|g" k8s-gitops/deployment.yaml
-  #         echo "Updated:"
-  #         grep "image:" k8s-gitops/deployment.yaml
-
-  #     - name: Commit Changes
-  #       working-directory: infra
-  #       run: |
-  #         git config user.email "github-actions[bot]@users.noreply.github.com"
-  #         git config user.name "github-actions[bot]"
-  #         git add k8s-gitops/deployment.yaml
-  #         git diff --staged --quiet || git commit -m "Deploy ${{ env.IMAGE_TAG }} [skip ci]"
-  #         git push
-
-  #     - name: Trigger ArgoCD
-  #       if: vars.ARGOCD_ENABLED == 'true'
-  #       run: |
-  #         curl -k -X POST \
-  #           -H "Authorization: Bearer ${{ secrets.ARGOCD_AUTH_TOKEN }}" \
-  #           "${{ secrets.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync"
+  #     ...
 
   # ============================================================================
   # REPORT
   # ============================================================================
-
   report:
     name: Pipeline Report
     runs-on: ubuntu-latest
-    needs: [security-scan, build, container, deploy]
+    needs: [security-scan, build, container]   # deploy removed because it's commented
     if: always()
     
     steps:
@@ -221,11 +190,10 @@ jobs:
         run: |
           echo "# Pipeline Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Security | ${{ needs.security-scan.result == 'success' && || }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build | ${{ needs.build.result == 'success' &&  || }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Container | ${{ needs.container.result == 'success' &&  ||  }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Deploy | ${{ needs.deploy.result == 'success' && || needs.deploy.result == 'skipped' &&  || }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage     | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Security  | ${{ needs.security-scan.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build     | ${{ needs.build.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container | ${{ needs.container.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** \`${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
