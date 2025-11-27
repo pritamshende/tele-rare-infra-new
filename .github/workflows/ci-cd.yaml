@@ -10,7 +10,7 @@ env:
   IMAGE_NAME: tele-rare-backend
   IMAGE_TAG: ${{ github.sha }}
   DOCKERHUB_USERNAME: pritamshende
-  DOCKERHUB_PASSWORD: Samsung@123 # ⚠️ move this to GitHub secrets in real use
+  DOCKERHUB_PASSWORD: Samsung@123 # ⚠️ move to GitHub secrets in real use
   K8S_NAMESPACE: tele-rare
   TEST_ONLY: false
   SONAR_HOST_URL: https://sonarcloud.io
@@ -19,26 +19,39 @@ env:
   ARGOCD_AUTH_TOKEN: your-argocd-token
 
 jobs:
-  # -------------------- Legitify security scan --------------------
+  # ================= Legitify (PR only, this repo only) =================
   legitify-security-check:
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'   # run only for PRs
 
     steps:
-      - name: Run Legitify (SCM config scan)
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Run Legitify with Scorecard
         uses: Legit-Labs/legitify@main
         with:
+          # PAT with only "repo" scope, stored as a secret
           github_token: ${{ secrets.PAT_FOR_LEGITIFY }}
-          # Limit scan to this repo; remove this to scan whole org
-          repo: ${{ github.repository }}
-          # Optional: ignore some policies if needed
+
+          # Scan ONLY the current repo (no org / enterprise)
+          analyze_self_only: 'true'
+
+          # Enable OSSF Scorecard integration
+          # 'verbose' shows more details in the logs
+          scorecard: 'verbose'
+
+          # Upload SARIF to GitHub Code Scanning
+          upload_code_scanning: 'true'
+
+          # Optional: ignore some checks if you want
           # ignore-policies: |
           #   non_admins_can_create_public_repositories
-          #   requires_status_checks
 
-  # -------------------- Build & Deploy --------------------
+  # ================= Build & Deploy (same as you had) =================
   build-and-deploy:
     runs-on: ubuntu-latest
-    needs: legitify-security-check   # <- wait for Legitify to pass
+    needs: legitify-security-check   # PRs are gated by Legitify; pushes still run
 
     steps:
       - name: Checkout code
@@ -84,7 +97,7 @@ jobs:
         uses: aquasecurity/trivy-action@0.11.2
         with:
           image-ref:  ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          exit-code: '0'                # Or '1' if you want failures
+          exit-code: '0'                # change to '1' to fail on vulns
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           
