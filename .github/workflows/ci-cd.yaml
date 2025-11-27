@@ -61,7 +61,7 @@ jobs:
       - name: Display Legitify Results Summary
         if: always()
         run: |
-          echo "✅ Legitify security scan completed!"
+          echo " Legitify security scan completed!"
           echo "Check the Security tab for detailed results and scorecard."
 
   # -------------------- Build & Deploy --------------------
