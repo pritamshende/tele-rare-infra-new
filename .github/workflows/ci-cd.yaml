@@ -84,7 +84,6 @@ jobs:
     name: Code Quality
     runs-on: ubuntu-latest
     needs: build
-    if: vars.SONAR_ENABLED == 'true'
     
     steps:
       - name: Checkout Code
