@@ -10,7 +10,7 @@ env:
   IMAGE_NAME: tele-rare-backend
   IMAGE_TAG: ${{ github.sha }}
   DOCKERHUB_USERNAME: pritamshende
-  DOCKERHUB_PASSWORD: Samsung@123 # ⚠️ For production, move this to GitHub secrets
+  DOCKERHUB_PASSWORD: Samsung@123 # ⚠️ move this to GitHub secrets in real use
   K8S_NAMESPACE: tele-rare
   TEST_ONLY: false
   SONAR_HOST_URL: https://sonarcloud.io
@@ -19,8 +19,26 @@ env:
   ARGOCD_AUTH_TOKEN: your-argocd-token
 
 jobs:
+  # -------------------- Legitify security scan --------------------
+  legitify-security-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run Legitify (SCM config scan)
+        uses: Legit-Labs/legitify@main
+        with:
+          github_token: ${{ secrets.PAT_FOR_LEGITIFY }}
+          # Limit scan to this repo; remove this to scan whole org
+          repo: ${{ github.repository }}
+          # Optional: ignore some policies if needed
+          # ignore-policies: |
+          #   non_admins_can_create_public_repositories
+          #   requires_status_checks
+
+  # -------------------- Build & Deploy --------------------
   build-and-deploy:
     runs-on: ubuntu-latest
+    needs: legitify-security-check   # <- wait for Legitify to pass
 
     steps:
       - name: Checkout code
@@ -66,13 +84,13 @@ jobs:
         uses: aquasecurity/trivy-action@0.11.2
         with:
           image-ref:  ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          exit-code: '0'                # Or '0' if you don't want failures
+          exit-code: '0'                # Or '1' if you want failures
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           
       - name: Update Kubernetes manifests (set image tag)
         run: |
-           sed -i "s|image: .*|image: pritamshende/tele-rare-backend:${{ env.IMAGE_TAG }}|" k8s-gitops/deployment.yaml
+          sed -i "s|image: .*|image: pritamshende/tele-rare-backend:${{ env.IMAGE_TAG }}|" k8s-gitops/deployment.yaml
           
       - name: Commit and push updated deployment manifest
         run: |
@@ -81,6 +99,7 @@ jobs:
           git add k8s-gitops/deployment.yaml
           git commit -m "Update image tag to ${{ env.IMAGE_TAG }} [skip ci]" || echo "No changes to commit"
           git push
+
       - name: Trigger ArgoCD Sync
         if: env.ARGOCD_AUTH_TOKEN != 'your-argocd-token'
         run: |
