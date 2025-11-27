@@ -167,44 +167,44 @@ jobs:
   # DEPLOY
   # ============================================================================
 
-  deploy:
-    name: Deploy to AKS
-    runs-on: ubuntu-latest
-    needs: container
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    permissions:
-      contents: write
+  # deploy:
+  #   name: Deploy to AKS
+  #   runs-on: ubuntu-latest
+  #   needs: container
+  #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   permissions:
+  #     contents: write
     
-    steps:
-      - name: Checkout Infra Repo
-        uses: actions/checkout@v4
-        with:
-          repository: pritamshende/tele-rare-infra-new
-          token: ${{ secrets.PAT_FOR_LEGITIFY }}
-          path: infra
+  #   steps:
+  #     - name: Checkout Infra Repo
+  #       uses: actions/checkout@v4
+  #       with:
+  #         repository: pritamshende/tele-rare-infra-new
+  #         token: ${{ secrets.PAT_FOR_LEGITIFY }}
+  #         path: infra
 
-      - name: Update Deployment
-        working-directory: infra
-        run: |
-          sed -i "s|image: .*/${{ env.IMAGE_NAME }}:.*|image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|g" k8s-gitops/deployment.yaml
-          echo "Updated:"
-          grep "image:" k8s-gitops/deployment.yaml
+  #     - name: Update Deployment
+  #       working-directory: infra
+  #       run: |
+  #         sed -i "s|image: .*/${{ env.IMAGE_NAME }}:.*|image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|g" k8s-gitops/deployment.yaml
+  #         echo "Updated:"
+  #         grep "image:" k8s-gitops/deployment.yaml
 
-      - name: Commit Changes
-        working-directory: infra
-        run: |
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git config user.name "github-actions[bot]"
-          git add k8s-gitops/deployment.yaml
-          git diff --staged --quiet || git commit -m "Deploy ${{ env.IMAGE_TAG }} [skip ci]"
-          git push
+  #     - name: Commit Changes
+  #       working-directory: infra
+  #       run: |
+  #         git config user.email "github-actions[bot]@users.noreply.github.com"
+  #         git config user.name "github-actions[bot]"
+  #         git add k8s-gitops/deployment.yaml
+  #         git diff --staged --quiet || git commit -m "Deploy ${{ env.IMAGE_TAG }} [skip ci]"
+  #         git push
 
-      - name: Trigger ArgoCD
-        if: vars.ARGOCD_ENABLED == 'true'
-        run: |
-          curl -k -X POST \
-            -H "Authorization: Bearer ${{ secrets.ARGOCD_AUTH_TOKEN }}" \
-            "${{ secrets.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync"
+  #     - name: Trigger ArgoCD
+  #       if: vars.ARGOCD_ENABLED == 'true'
+  #       run: |
+  #         curl -k -X POST \
+  #           -H "Authorization: Bearer ${{ secrets.ARGOCD_AUTH_TOKEN }}" \
+  #           "${{ secrets.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync"
 
   # ============================================================================
   # REPORT
@@ -223,9 +223,9 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Stage | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Security | ${{ needs.security-scan.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Build | ${{ needs.build.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Container | ${{ needs.container.result == 'success' && '✅' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Deploy | ${{ needs.deploy.result == 'success' && '✅' || needs.deploy.result == 'skipped' && '⏭️' || '❌' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Security | ${{ needs.security-scan.result == 'success' && || }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build | ${{ needs.build.result == 'success' &&  || }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Container | ${{ needs.container.result == 'success' &&  ||  }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy | ${{ needs.deploy.result == 'success' && || needs.deploy.result == 'skipped' &&  || }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Image:** \`${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
