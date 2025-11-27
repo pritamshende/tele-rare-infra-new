@@ -30,6 +30,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: false          # 👈 ignore broken submodules
 
       - name: Run Legitify Security Scan
         uses: Legit-Labs/legitify@main
@@ -57,6 +58,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          submodules: false          # 👈 ignore submodules
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -92,6 +95,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          submodules: false          # 👈 ignore submodules
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -122,6 +126,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          submodules: false          # 👈 ignore submodules
 
       - name: Download JAR
         uses: actions/download-artifact@v4
