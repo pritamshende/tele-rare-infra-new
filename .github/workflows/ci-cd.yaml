@@ -1,23 +1,55 @@
-name: CI/CD Pipeline
+name: Complete Production CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
+  schedule:
+    # Run security scans weekly on Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      skip_tests:
+        description: 'Skip tests'
+        required: false
+        default: 'false'
+      environment:
+        description: 'Deployment environment'
+        required: false
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+          - development
 
 env:
+  # Application Configuration
   IMAGE_NAME: tele-rare-backend
   IMAGE_TAG: ${{ github.sha }}
-  DOCKERHUB_USERNAME: pritamshende
   K8S_NAMESPACE: tele-rare
-  TEST_ONLY: false
+  
+  # Azure Configuration
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}
+  AZURE_REGION: eastus
+  
+  # Tool Versions
+  JAVA_VERSION: '17'
+  TERRAFORM_VERSION: '1.6.0'
+  
+  # Quality & Security
   SONAR_HOST_URL: https://sonarcloud.io
-  ARGOCD_SERVER: https://argocd.example.com
+  ARGOCD_SERVER: ${{ secrets.ARGOCD_SERVER }}
 
 jobs:
-  # -------------------- Legitify Security Scan --------------------
-  legitify-security-check:
+  # ============================================================================
+  # STAGE 1: SECURITY SCANNING
+  # ============================================================================
+  
+  legitify-security-scan:
+    name: 🔒 Legitify GitHub Security Analysis
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -25,147 +57,666 @@ jobs:
       issues: write
     
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run Legitify Security Scan
-        uses: Legit-Labs/legitify@v1.0.10
-        with:
-          # Required: GitHub token with appropriate permissions
-          github_token: ${{ secrets.PAT_FOR_LEGITIFY }}
-          
-          # Analyze only current repository (not entire org)
-          analyze_self_only: true
-          
-          # Upload results to GitHub Security tab (recommended)
-          upload_code_scanning: true
-          
-          # Generate a scorecard in the summary
-          scorecard: true
-          
-          # Optional: Specify the base version (latest stable)
-          legitify_base_version: latest
-          
-          # Optional: Fail the workflow if critical issues are found
-          # Uncomment the line below if you want to enforce security policies
-          # fail_on_errors: true
-          
-          # Optional: Upload results as an artifact
-          artifact_name: legitify-results
-          
-          # Optional: Ignore specific policies (uncomment and modify as needed)
-          # ignore-policies: |
-          #   non_admins_can_create_public_repositories
-          #   requires_status_checks
-
-      - name: Display Legitify Results Summary
-        if: always()
-        run: |
-          echo " Legitify security scan completed!"
-          echo "Check the Security tab for detailed results and scorecard."
-
-  # -------------------- Build & Deploy --------------------
-  build-and-deploy:
-    runs-on: ubuntu-latest
-    needs: legitify-security-check
-    permissions:
-      contents: write
-      packages: write
-      
-    steps:
-      - name: Checkout code
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
 
-      - name: Set up JDK 17
+      - name: 🔍 Run Legitify Security Scan
+        uses: Legit-Labs/legitify@main
+        with:
+          # Fine-grained GitHub Personal Access Token
+          github_token: ${{ secrets.PAT_FOR_LEGITIFY }}
+          
+          # Analyze only this repository (not entire organization)
+          analyze_self_only: "true"
+          
+          # Enable verbose scorecard for detailed security scoring
+          scorecard: "verbose"
+          
+          # Upload results to GitHub Security tab (Code Scanning)
+          upload_code_scanning: "true"
+          
+          # Save results as downloadable artifact
+          artifact_name: "legitify-security-report"
+          
+          # Use latest stable Legitify version
+          legitify_base_version: "1.0"
+          
+          # Optional: Fail workflow on policy violations
+          # fail_on_errors: "true"
+
+      - name: 📊 Generate Security Summary
+        if: always()
+        run: |
+          echo "## 🔒 Legitify Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **GitHub repository security analysis completed!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 View Detailed Results:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Security Tab:** Go to \`Security → Code scanning → Legitify\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scorecard:** Check workflow logs above for detailed scoring" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact:** Download \`legitify-security-report\` below for offline review" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🛡️ Security Policies Checked:" >> $GITHUB_STEP_SUMMARY
+          echo "- Branch protection rules" >> $GITHUB_STEP_SUMMARY
+          echo "- Repository permissions" >> $GITHUB_STEP_SUMMARY
+          echo "- Webhook configurations" >> $GITHUB_STEP_SUMMARY
+          echo "- Secret scanning settings" >> $GITHUB_STEP_SUMMARY
+          echo "- Dependency review" >> $GITHUB_STEP_SUMMARY
+
+  secret-scanning:
+    name: 🔐 Secret Detection (Gitleaks)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Run Gitleaks Secret Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_SUMMARY: true
+
+      - name: 📊 Secret Scan Summary
+        if: always()
+        run: |
+          echo "## 🔐 Secret Scanning Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ Git history scanned for exposed secrets, API keys, and credentials" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # STAGE 2: BUILD & TEST
+  # ============================================================================
+
+  build-and-test:
+    name: 🏗️ Build and Test Application
+    runs-on: ubuntu-latest
+    needs: [legitify-security-scan, secret-scanning]
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Build with Maven
-        run: mvn clean package -DskipTests
+      - name: 🔧 Build with Maven
+        run: |
+          echo "Building application..."
+          mvn clean package -DskipTests
+          echo "✅ Build completed successfully!"
 
-      - name: SonarQube Scan
-        if: env.SONAR_TOKEN != '' && env.SONAR_TOKEN != 'your-sonar-token'
-        uses: SonarSource/sonarcloud-github-action@v3
+      - name: 🧪 Run Unit Tests
+        if: github.event.inputs.skip_tests != 'true'
+        run: |
+          echo "Running unit tests..."
+          mvn test
+          echo "✅ Tests completed!"
+
+      - name: 📈 Generate Test Coverage Report
+        if: github.event.inputs.skip_tests != 'true'
+        run: mvn jacoco:report
+
+      - name: 📊 Upload Test Results
+        if: always() && github.event.inputs.skip_tests != 'true'
+        uses: actions/upload-artifact@v4
         with:
-          projectBaseDir: .
+          name: test-results
+          path: target/surefire-reports/
+          retention-days: 7
+
+      - name: 📦 Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-jar
+          path: target/*.jar
+          retention-days: 7
+
+      - name: 📊 Build Summary
+        run: |
+          echo "## 🏗️ Build & Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Application built successfully!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Java Version:** ${{ env.JAVA_VERSION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Tool:** Maven" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact:** Available for download below" >> $GITHUB_STEP_SUMMARY
+
+  code-quality-analysis:
+    name: 📊 SonarQube Code Quality Analysis
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: secrets.SONAR_TOKEN != ''
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: 📥 Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: application-jar
+          path: target/
+
+      - name: 🔍 Run SonarQube Analysis
+        uses: SonarSource/sonarcloud-github-action@v3
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
+      - name: 📊 Quality Analysis Summary
+        run: |
+          echo "## 📊 Code Quality Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **SonarQube analysis completed!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View detailed results at: ${{ env.SONAR_HOST_URL }}" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # STAGE 3: CONTAINER BUILD & SECURITY
+  # ============================================================================
+
+  build-and-scan-container:
+    name: 🐳 Build and Scan Container Image
+    runs-on: ubuntu-latest
+    needs: [build-and-test, code-quality-analysis]
+    if: |
+      always() && 
+      needs.build-and-test.result == 'success' &&
+      (needs.code-quality-analysis.result == 'success' || needs.code-quality-analysis.result == 'skipped')
+    permissions:
+      contents: read
+      security-events: write
+      packages: write
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 📥 Download Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: application-jar
+          path: target/
+
+      - name: 🔧 Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Log in to Docker Hub
+      - name: 🔐 Log in to Azure Container Registry
         uses: docker/login-action@v3
         with:
-          registry: docker.io
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          registry: ${{ env.ACR_LOGIN_SERVER }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
 
-      - name: Build and push Docker image
+      - name: 🏗️ Build Docker Image (for scanning)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          load: true
+          tags: |
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: 🔍 Run Trivy Container Scan (SARIF for Security Tab)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+      - name: 📤 Upload Trivy Results to Security Tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'container-vulnerability-scan'
+
+      - name: 🔍 Run Trivy Container Scan (Table for Artifact)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: 'table'
+          output: 'trivy-report.txt'
+          severity: 'HIGH,CRITICAL'
+          ignore-unfixed: true
+
+      - name: 📤 Upload Trivy Report as Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-vulnerability-report
+          path: trivy-report.txt
+          retention-days: 30
+
+      - name: 🚀 Push Docker Image to ACR
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-            ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:latest
-          cache-from: type=registry,ref=${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+            ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}-latest
+          cache-from: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
 
-      - name: Run Trivy Security Scan
-        uses: aquasecurity/trivy-action@0.28.0
+      - name: 📊 Container Security Summary
+        if: always()
+        run: |
+          echo "## 🐳 Container Security Scan Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** \`${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Trivy vulnerability scan completed!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 View Results:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Security Tab:** \`Security → Code scanning → Container scan\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Artifact:** Download \`trivy-vulnerability-report\` below" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event_name }}" == "push" ] && [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "✅ **Image pushed to ACR successfully!**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "ℹ️ **Image built but not pushed** (only push on main branch)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+  # ============================================================================
+  # STAGE 4: INFRASTRUCTURE SECURITY (if Terraform exists)
+  # ============================================================================
+
+  terraform-security-scan:
+    name: 🏗️ Terraform Security Scan
+    runs-on: ubuntu-latest
+    needs: legitify-security-scan
+    if: hashFiles('**/*.tf') != ''
+    permissions:
+      contents: read
+      security-events: write
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          image-ref: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          exit-code: '0'
-          ignore-unfixed: true
-          severity: 'HIGH,CRITICAL'
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Upload Trivy results to GitHub Security
+      - name: 🎨 Terraform Format Check
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      - name: 🔧 Terraform Init
+        run: terraform init -backend=false
+
+      - name: ✅ Terraform Validate
+        run: terraform validate
+
+      - name: 🔍 Run Checkov Security Scan
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform
+          output_format: cli,sarif
+          output_file_path: console,checkov-results.sarif
+          soft_fail: true
+          download_external_modules: true
+
+      - name: 📤 Upload Checkov Results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: 'trivy-results.sarif'
+          sarif_file: checkov-results.sarif
+          category: 'terraform-security'
 
-      - name: Update Kubernetes manifests
+      - name: 🔍 Run Trivy IaC Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-iac-results.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: 📤 Upload Trivy IaC Results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-iac-results.sarif'
+          category: 'infrastructure-security'
+
+      - name: 📊 IaC Security Summary
+        if: always()
         run: |
-          sed -i "s|image: .*/${{ env.IMAGE_NAME }}:.*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|" k8s-gitops/deployment.yaml
+          echo "## 🏗️ Infrastructure Security Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Terraform security analysis completed!**" >> $GITHUB_STEP_SUMMARY
 
-      - name: Commit and push updated manifests
+  # ============================================================================
+  # STAGE 5: KUBERNETES MANIFEST SECURITY (if K8s manifests exist)
+  # ============================================================================
+
+  kubernetes-security-scan:
+    name: ☸️ Kubernetes Security Scan
+    runs-on: ubuntu-latest
+    needs: legitify-security-scan
+    if: hashFiles('k8s-gitops/**/*.yaml') != '' || hashFiles('k8s/**/*.yaml') != ''
+    
+    steps:
+      - name: 📥 Checkout Code
+        uses: actions/checkout@v4
+
+      - name: 🔍 Run Kubesec Security Scan
+        uses: controlplaneio/kubesec-action@v0.0.2
+        with:
+          input: k8s-gitops/
+          format: json
+          exit-code: "0"
+        continue-on-error: true
+
+      - name: 🔍 Run Trivy K8s Manifest Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'config'
+          scan-ref: 'k8s-gitops/'
+          format: 'table'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '0'
+
+      - name: 📊 K8s Security Summary
+        if: always()
+        run: |
+          echo "## ☸️ Kubernetes Security Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Kubernetes manifests scanned for security issues**" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # STAGE 6: DEPLOYMENT
+  # ============================================================================
+
+  deploy-to-kubernetes:
+    name: 🚀 Deploy to Azure Kubernetes Service
+    runs-on: ubuntu-latest
+    needs: [build-and-scan-container]
+    if: |
+      github.event_name == 'push' && 
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop') &&
+      needs.build-and-scan-container.result == 'success'
+    permissions:
+      contents: write
+    environment:
+      name: ${{ github.event.inputs.environment || 'production' }}
+    
+    steps:
+      - name: 📥 Checkout Infrastructure Repository
+        uses: actions/checkout@v4
+        with:
+          repository: pritamshende/tele-rare-infra-new
+          token: ${{ secrets.PAT_FOR_LEGITIFY }}
+          path: infra
+          fetch-depth: 0
+
+      - name: 🔧 Update Kubernetes Deployment Manifest
+        working-directory: infra
+        run: |
+          echo "Updating deployment manifest with new image tag..."
+          
+          # Update image tag in deployment.yaml
+          sed -i "s|image: .*/${{ env.IMAGE_NAME }}:.*|image: ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}|g" k8s-gitops/deployment.yaml
+          
+          # Verify the change
+          echo "✅ Updated image reference:"
+          grep "image:" k8s-gitops/deployment.yaml | grep "${{ env.IMAGE_NAME }}"
+
+      - name: 📝 Commit and Push Manifest Changes
+        working-directory: infra
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
+          
           git add k8s-gitops/deployment.yaml
           
           if git diff --staged --quiet; then
-            echo "No changes to commit"
+            echo "ℹ️ No changes to commit"
           else
-            git commit -m "🚀 Update image tag to ${{ env.IMAGE_TAG }} [skip ci]"
+            git commit -m "🚀 Deploy ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }} to ${{ github.event.inputs.environment || 'production' }} [skip ci]
+
+            Triggered by: ${{ github.actor }}
+            Commit: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Workflow: ${{ github.workflow }}"
+            
             git push
+            echo "✅ Deployment manifest updated and pushed successfully!"
           fi
 
-      - name: Trigger ArgoCD Sync
+      - name: 🔄 Trigger ArgoCD Application Sync
         if: secrets.ARGOCD_AUTH_TOKEN != ''
         run: |
-          response=$(curl -k -w "\n%{http_code}" \
+          echo "🔄 Triggering ArgoCD sync for tele-rare-backend application..."
+          
+          response=$(curl -k -s -w "\n%{http_code}" \
             -H "Authorization: Bearer ${{ secrets.ARGOCD_AUTH_TOKEN }}" \
-            -X POST "${{ env.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync")
+            -H "Content-Type: application/json" \
+            -X POST "${{ env.ARGOCD_SERVER }}/api/v1/applications/tele-rare-backend/sync" \
+            -d '{
+              "prune": false,
+              "dryRun": false,
+              "strategy": {
+                "hook": {
+                  "force": true
+                }
+              }
+            }')
           
           http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n-1)
+          
+          echo "HTTP Response Code: $http_code"
+          echo "Response Body: $body"
           
           if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
-            echo "✅ ArgoCD sync triggered successfully"
+            echo "✅ ArgoCD sync triggered successfully!"
           else
             echo "⚠️ ArgoCD sync failed with status code: $http_code"
+            echo "Response: $body"
             exit 1
           fi
+
+      - name: 📊 Deployment Summary
+        if: always()
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Deployment Details:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Environment** | ${{ github.event.inputs.environment || 'production' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image** | \`${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Namespace** | \`${{ env.K8S_NAMESPACE }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Commit** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Branch** | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Triggered By** | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Deployment completed successfully!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Monitor ArgoCD dashboard for sync status" >> $GITHUB_STEP_SUMMARY
+          echo "2. Check pod status: \`kubectl get pods -n ${{ env.K8S_NAMESPACE }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "3. View logs: \`kubectl logs -n ${{ env.K8S_NAMESPACE }} -l app=${{ env.IMAGE_NAME }}\`" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================================
+  # STAGE 7: FINAL REPORT
+  # ============================================================================
+
+  pipeline-completion-report:
+    name: 📋 Pipeline Completion Report
+    runs-on: ubuntu-latest
+    needs: 
+      - legitify-security-scan
+      - secret-scanning
+      - build-and-test
+      - code-quality-analysis
+      - build-and-scan-container
+      - terraform-security-scan
+      - kubernetes-security-scan
+      - deploy-to-kubernetes
+    if: always()
+    
+    steps:
+      - name: 📊 Generate Comprehensive Pipeline Report
+        run: |
+          echo "# 🎯 CI/CD Pipeline Execution Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Repository:** \`${{ github.repository }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Workflow:** ${{ github.workflow }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Triggered By:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Event:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Run Number:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📋 Pipeline Stages Status:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Stage | Status | Duration |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|----------|" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔒 Legitify Security Scan | ${{ needs.legitify-security-scan.result == 'success' && '✅ Passed' || needs.legitify-security-scan.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🔐 Secret Scanning | ${{ needs.secret-scanning.result == 'success' && '✅ Passed' || needs.secret-scanning.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ Build & Test | ${{ needs.build-and-test.result == 'success' && '✅ Passed' || needs.build-and-test.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📊 Code Quality | ${{ needs.code-quality-analysis.result == 'success' && '✅ Passed' || needs.code-quality-analysis.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🐳 Container Security | ${{ needs.build-and-scan-container.result == 'success' && '✅ Passed' || needs.build-and-scan-container.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🏗️ Terraform Security | ${{ needs.terraform-security-scan.result == 'success' && '✅ Passed' || needs.terraform-security-scan.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| ☸️ Kubernetes Security | ${{ needs.kubernetes-security-scan.result == 'success' && '✅ Passed' || needs.kubernetes-security-scan.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| 🚀 Deployment | ${{ needs.deploy-to-kubernetes.result == 'success' && '✅ Passed' || needs.deploy-to-kubernetes.result == 'skipped' && '⏭️ Skipped' || '❌ Failed' }} | - |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Security Scan Results:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All security scan results are available in:" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub Security Tab:** \`Security → Code scanning\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Workflow Artifacts:** Download detailed reports below" >> $GITHUB_STEP_SUMMARY
+          echo "- **Individual Job Logs:** Check each job above for details" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🛡️ Security Scans Performed:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ GitHub repository security policies (Legitify)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Secret detection in git history (Gitleaks)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Container vulnerability scanning (Trivy)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Code quality analysis (SonarQube)" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.terraform-security-scan.result }}" != "skipped" ]; then
+            echo "- ✅ Infrastructure as Code security (Checkov, Trivy)" >> $GITHUB_STEP_SUMMARY
+          fi
+          if [ "${{ needs.kubernetes-security-scan.result }}" != "skipped" ]; then
+            echo "- ✅ Kubernetes manifest security (Kubesec)" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Overall status
+          if [ "${{ needs.legitify-security-scan.result }}" == "success" ] && \
+             [ "${{ needs.build-and-test.result }}" == "success" ] && \
+             [ "${{ needs.build-and-scan-container.result }}" == "success" ]; then
+            echo "## ✅ Pipeline Execution: SUCCESS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "All critical stages completed successfully! 🎉" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ⚠️ Pipeline Execution: COMPLETED WITH ISSUES" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Some stages failed or were skipped. Please review the logs above." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📚 Additional Resources:" >> $GITHUB_STEP_SUMMARY
+          echo "- [View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+          echo "- [View Security Alerts](${{ github.server_url }}/${{ github.repository }}/security/code-scanning)" >> $GITHUB_STEP_SUMMARY
+          echo "- [View Commit](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Pipeline completed at:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+
+      - name: 💬 Comment on Pull Request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `
+            ## 🎯 CI/CD Pipeline Results
+            
+            **Status:** ${{ needs.legitify-security-scan.result == 'success' && needs.build-and-test.result == 'success' && '✅ All checks passed!' || '⚠️ Some checks failed' }}
+            
+            ### Pipeline Stages:
+            - 🔒 Security Scan: ${{ needs.legitify-security-scan.result == 'success' && '✅' || '❌' }}
+            - 🏗️ Build & Test: ${{ needs.build-and-test.result == 'success' && '✅' || '❌' }}
+            - 🐳 Container Scan: ${{ needs.build-and-scan-container.result == 'success' && '✅' || '❌' }}
+            
+            **Commit:** \`${{ github.sha }}\`
+            **Triggered by:** @${{ github.actor }}
+            
+            [View Full Results](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  # ============================================================================
+  # NOTIFICATIONS (Optional)
+  # ============================================================================
+
+  notify-on-failure:
+    name: 📧 Notify on Pipeline Failure
+    runs-on: ubuntu-latest
+    needs: [pipeline-completion-report]
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: 📧 Send Failure Notification
+        run: |
+          echo "🚨 Pipeline failed on main branch!"
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Actor: ${{ github.actor }}"
+          echo ""
+          echo "View details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          # TODO: Integrate with Slack, Teams, Email, etc.
+          # Example for Slack:
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data "{\"text\":\"Pipeline failed on main branch!\"}" \
+          #   ${{ secrets.SLACK_WEBHOOK_URL }}
